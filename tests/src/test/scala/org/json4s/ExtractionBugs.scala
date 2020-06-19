@@ -1,10 +1,14 @@
 package org.json4s
 
-import org.specs2.mutable.Specification
-import reflect.{ClassDescriptor, PrimaryConstructor, Reflector}
-import org.json4s.native.Document
-import java.util
+import java.io.PrintWriter
 import java.math.{BigDecimal => JavaBigDecimal, BigInteger => JavaBigInteger}
+import java.util
+
+import org.json4s.native.Document
+import org.json4s.reflect.{ClassDescriptor, PrimaryConstructor, Reflector}
+import org.specs2.mutable.Specification
+
+import scala.concurrent.duration.{FiniteDuration, _}
 
 object NativeExtractionBugs extends ExtractionBugs[Document]("Native") with native.JsonMethods
 object JacksonExtractionBugs extends ExtractionBugs[JValue]("Jackson") with jackson.JsonMethods
@@ -143,6 +147,8 @@ object ExtractionBugs {
   object MapImplementationSerializer {
     val strangeSerialization = Extraction.decompose(MapImplementation.content)(DefaultFormats)
   }
+
+  case class TwoNumbers(x: Long, squared: Long)
 }
 abstract class ExtractionBugs[T](mod: String) extends Specification with JsonMethods[T] {
 
@@ -352,5 +358,32 @@ abstract class ExtractionBugs[T](mod: String) extends Specification with JsonMet
       val obj = parse("""{}""".stripMargin)
       Extraction.extract[OptionOfInt](obj) must_== OptionOfInt(None)
     }
+
+    "Extract should be quick even if for large JSONs" in {
+      // given
+      val pairs = (1 to 8 * 1000 * 1000).map{i => s"""{"x":$i, "squared": ${i*i}}"""}
+      val jsonString = s"[${pairs.mkString(",\\n")}]"
+
+      new PrintWriter("/tmp/numbers.json").write(jsonString)
+
+      // when
+      val res: List[TwoNumbers] = withTimeLimit(2.seconds) {
+        val obj = parse(jsonString)
+        Extraction.extract[List[TwoNumbers]](obj)
+      }
+
+      // test
+      jsonString.length must_== 4
+      res must_== "a"
+    }
+  }
+
+  private def withTimeLimit[T](limit: FiniteDuration)(f: => T): T = {
+    val deadline = limit fromNow
+    val res: T = f
+    if (deadline.isOverdue()) {
+      throw new IllegalArgumentException("TODO")
+    }
+    res
   }
 }
